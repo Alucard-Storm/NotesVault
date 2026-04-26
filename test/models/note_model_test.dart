@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:notevault/models/checklist_item.dart';
 import 'package:notevault/models/note.dart';
 
 void main() {
@@ -34,15 +35,20 @@ void main() {
         isArchived: false,
         folder: null,
         updatedAt: DateTime(2024, 1, 1),
+        noteType: NoteType.text,
       );
 
       final modified = original.copyWith(
         title: 'Modified',
         isPinned: true,
+        noteType: NoteType.richText,
+        contentFormat: 'rich',
       );
 
       expect(modified.title, equals('Modified'));
       expect(modified.isPinned, isTrue);
+      expect(modified.noteType, NoteType.richText);
+      expect(modified.contentFormat, 'rich');
       expect(modified.id, equals(original.id)); // Unchanged
       expect(modified.content, equals(original.content)); // Unchanged
     });
@@ -57,6 +63,15 @@ void main() {
         isArchived: false,
         folder: 'Work',
         updatedAt: DateTime(2024, 1, 2),
+        noteType: NoteType.checklist,
+        checklistItems: const [
+          ChecklistItem(
+            id: 'item-1',
+            text: 'First item',
+            isChecked: true,
+            order: 0,
+          ),
+        ],
       );
 
       final json = note.toJson();
@@ -66,6 +81,9 @@ void main() {
       expect(restored.title, equals(note.title));
       expect(restored.tags, equals(note.tags));
       expect(restored.isPinned, equals(note.isPinned));
+      expect(restored.noteType, NoteType.checklist);
+      expect(restored.checklistItems, hasLength(1));
+      expect(restored.checklistItems.first.text, 'First item');
     });
   });
 }

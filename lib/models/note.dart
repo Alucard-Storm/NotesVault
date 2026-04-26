@@ -1,3 +1,5 @@
+import 'checklist_item.dart';
+
 class Note {
   const Note({
     required this.id,
@@ -8,6 +10,9 @@ class Note {
     required this.isArchived,
     required this.tags,
     required this.folder,
+    this.noteType = NoteType.text,
+    this.contentFormat = 'plain',
+    this.checklistItems = const [],
   });
 
   final String id;
@@ -18,6 +23,9 @@ class Note {
   final bool isArchived;
   final List<String> tags;
   final String? folder;
+  final NoteType noteType; // 'text', 'checklist', 'richText'
+  final String contentFormat; // 'plain' or 'rich' (for richText notes)
+  final List<ChecklistItem> checklistItems; // Only used for checklist notes
 
   Note copyWith({
     String? id,
@@ -28,6 +36,9 @@ class Note {
     bool? isArchived,
     List<String>? tags,
     String? folder,
+    NoteType? noteType,
+    String? contentFormat,
+    List<ChecklistItem>? checklistItems,
   }) {
     return Note(
       id: id ?? this.id,
@@ -38,6 +49,9 @@ class Note {
       isArchived: isArchived ?? this.isArchived,
       tags: tags ?? this.tags,
       folder: folder ?? this.folder,
+      noteType: noteType ?? this.noteType,
+      contentFormat: contentFormat ?? this.contentFormat,
+      checklistItems: checklistItems ?? this.checklistItems,
     );
   }
 
@@ -51,6 +65,9 @@ class Note {
       'isArchived': isArchived,
       'tags': tags,
       'folder': folder,
+      'noteType': noteType.value,
+      'contentFormat': contentFormat,
+      'checklistItems': checklistItems.map((item) => item.toJson()).toList(),
     };
   }
 
@@ -59,6 +76,13 @@ class Note {
     final tags = rawTags is List<dynamic>
         ? rawTags.map((item) => item.toString()).toList()
         : const <String>[];
+
+    final rawChecklistItems = json['checklistItems'] as List<dynamic>?;
+    final checklistItems = rawChecklistItems != null
+        ? rawChecklistItems
+            .map((item) => ChecklistItem.fromJson(item as Map<String, dynamic>))
+            .toList()
+        : const <ChecklistItem>[];
 
     return Note(
       id: json['id'] as String,
@@ -71,6 +95,9 @@ class Note {
       folder: (json['folder'] as String?)?.trim().isEmpty == true
           ? null
           : (json['folder'] as String?),
+      noteType: NoteType.fromValue(json['noteType'] as String? ?? 'text'),
+      contentFormat: json['contentFormat'] as String? ?? 'plain',
+      checklistItems: checklistItems,
     );
   }
 }

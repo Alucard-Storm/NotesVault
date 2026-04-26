@@ -1,17 +1,29 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:notevault/controllers/notes_controller.dart';
+import 'package:notevault/models/checklist_item.dart';
 import 'package:notevault/models/note.dart';
+import 'package:notevault/services/notes_repository.dart';
 
-import '../mocks/mock_services.dart';
+class _InMemoryNotesRepository extends NotesRepository {
+  List<Note> storedNotes = const [];
+
+  @override
+  Future<List<Note>> loadNotes() async => storedNotes;
+
+  @override
+  Future<void> saveNotes(List<Note> notes) async {
+    storedNotes = List<Note>.from(notes);
+  }
+}
 
 void main() {
   group('NotesController', () {
     late NotesController controller;
-    late MockNotesRepository mockRepository;
+    late _InMemoryNotesRepository repository;
 
     setUp(() {
-      mockRepository = MockNotesRepository();
-      controller = NotesController(repository: mockRepository);
+      repository = _InMemoryNotesRepository();
+      controller = NotesController(repository: repository);
     });
 
     tearDown(() {
@@ -100,6 +112,62 @@ void main() {
     test('findById returns null for non-existent note', () {
       final found = controller.findById('non-existent');
       expect(found, isNull);
+    });
+
+    test('upsertNote stores checklist metadata for checklist notes', () async {
+      final checklistItems = [
+        const ChecklistItem(
+          id: 'item-1',
+          text: 'First',
+          isChecked: false,
+          order: 0,
+        ),
+        const ChecklistItem(
+          id: 'item-2',
+          text: 'Second',
+          isChecked: true,
+          order: 1,
+        ),
+      ];
+
+      final noteId = await controller.upsertNote(
+        title: 'Checklist',
+        content: '- [ ] First\n- [x] Second',
+        noteType: NoteType.checklist,
+        checklistItems: checklistItems,
+      );
+
+      final saved = controller.findById(noteId);
+      expect(saved, isNotNull);
+      expect(saved?.noteType, NoteType.checklist);
+      expect(saved?.checklistItems, hasLength(2));
+      expect(saved?.checklistItems.last.isChecked, isTrue);
+    });
+
+    test('setFolder preserves existing note type metadata', () async {
+      final note = Note(
+        id: 'rich-note',
+        title: 'Rich',
+        content: '[{"insert":"Hello"}]',
+        tags: const [],
+        isPinned: false,
+        isArchived: false,
+        folder: null,
+        updatedAt: DateTime(2024, 1, 1),
+        noteType: NoteType.richText,
+        contentFormat: 'rich',
+      );
+
+      controller.addNoteToInternalState(note);
+
+      await controller.setFolder('rich-note', 'Projects');
+
+      final updated = controller.findById('rich-note');
+      expect(updated, isNotNull);
+      expect(updated?.folder, 'Projects');
+      expect(updated?.noteType, NoteType.richText);
+      expect(updated?.contentFormat, 'rich');
+      expect(updated?.content, note.content);
     });
   });
 }

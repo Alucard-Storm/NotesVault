@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'controllers/notes_controller.dart';
 import 'controllers/vault_controller.dart';
 import 'core/di/service_locator.dart';
+import 'models/checklist_item.dart';
 import 'models/note.dart';
 import 'models/secure_note.dart';
 import 'models/vault.dart';
@@ -14,6 +16,9 @@ import 'services/android_keystore_service.dart';
 import 'services/local_auth_service.dart';
 import 'services/notes_repository.dart';
 import 'services/vault_repository.dart';
+import 'ui/components/checklist_note_editor.dart';
+import 'ui/components/rich_text_editor.dart';
+import 'ui/pages/document_scanner_page.dart';
 import 'ui/theme/app_theme.dart';
 
 void main() async {
@@ -462,6 +467,9 @@ class _NotesPageState extends State<NotesPage> {
       noteId: note?.id,
       title: draft.title,
       content: draft.content,
+      noteType: draft.noteType,
+      contentFormat: draft.contentFormat,
+      checklistItems: draft.checklistItems,
     );
 
     if (!context.mounted) {
@@ -525,11 +533,12 @@ class _NotesPageState extends State<NotesPage> {
           builder: (context, setState) {
             final q = queryController.text.trim().toLowerCase();
             final results = widget.controller.allNotes.where((note) {
+              final searchableContent = _notePlainText(note).toLowerCase();
               if (q.isEmpty) {
                 return true;
               }
               return note.title.toLowerCase().contains(q) ||
-                  note.content.toLowerCase().contains(q) ||
+                  searchableContent.contains(q) ||
                   note.tags.any((tag) => tag.toLowerCase().contains(q));
             }).toList();
             return AlertDialog(
@@ -560,7 +569,7 @@ class _NotesPageState extends State<NotesPage> {
                                 return ListTile(
                                   title: Text(note.title),
                                   subtitle: Text(
-                                    note.content,
+                                    _notePreviewText(note),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -785,17 +794,18 @@ class _SearchPageState extends State<SearchPage> {
   Widget build(BuildContext context) {
     final query = _queryController.text.trim().toLowerCase();
     final noteResults = widget.notesController.allNotes.where((note) {
+      final searchableContent = _notePlainText(note).toLowerCase();
       if (query.isEmpty) {
         return true;
       }
       return note.title.toLowerCase().contains(query) ||
-          note.content.toLowerCase().contains(query) ||
+          searchableContent.contains(query) ||
           note.tags.any((tag) => tag.toLowerCase().contains(query));
     }).map((note) {
       final tagsLabel = note.tags.isEmpty ? 'No tags' : note.tags.join(', ');
       return _SearchResult(
         title: note.title,
-        snippet: note.content,
+        snippet: _notePreviewText(note),
         sourceLabel: 'Notes · $tagsLabel',
       );
     }).toList();
@@ -1652,8 +1662,9 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
   late final TextEditingController _titleController;
   late final TextEditingController _contentController;
   late final TextEditingController _scanController;
+  late String _richTextContent;
   int _modeIndex = 0;
-  final List<_ChecklistItem> _checklist = [];
+  final List<ChecklistItem> _checklist = [];
   List<String> _tags = const [];
   String? _folder;
   bool _isPinned = false;
@@ -1666,24 +1677,53 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
     final initialContent = widget.note?.content ?? '';
     _contentController = TextEditingController(text: initialContent);
     _scanController = TextEditingController();
+    _richTextContent = widget.note?.noteType == NoteType.richText ? initialContent : '';
     _tags = widget.note?.tags ?? const [];
     _folder = widget.note?.folder;
     _isPinned = widget.note?.isPinned ?? false;
 
-    if (initialContent.startsWith('[scan]\n')) {
+    if (widget.note?.noteType == NoteType.richText) {
       _modeIndex = 2;
+    } else if (initialContent.startsWith('[scan]\n')) {
+      _modeIndex = 3;
       _scanController.text = initialContent.replaceFirst('[scan]\n', '');
+    } else if (widget.note?.noteType == NoteType.checklist) {
+      _modeIndex = 1;
+      if (widget.note != null && widget.note!.checklistItems.isNotEmpty) {
+        _checklist.addAll(widget.note!.checklistItems);
+      } else {
+        _checklist.addAll(_parseLegacyChecklist(initialContent));
+      }
     } else if (initialContent.contains('- [ ]') || initialContent.contains('- [x]')) {
       _modeIndex = 1;
-      for (final line in initialContent.split('\n')) {
-        if (line.startsWith('- [x] ')) {
-          _checklist.add(_ChecklistItem(label: line.substring(6), isDone: true));
-        } else if (line.startsWith('- [ ] ')) {
-          _checklist.add(_ChecklistItem(label: line.substring(6)));
-        }
+      _checklist.addAll(_parseLegacyChecklist(initialContent));
+    }
+  }
+
+  List<ChecklistItem> _parseLegacyChecklist(String content) {
+    final items = <ChecklistItem>[];
+    for (final line in content.split('\n')) {
+      if (line.startsWith('- [x] ')) {
+        items.add(
+          ChecklistItem(
+            id: '${items.length}',
+            text: line.substring(6),
+            isChecked: true,
+            order: items.length,
+          ),
+        );
+      } else if (line.startsWith('- [ ] ')) {
+        items.add(
+          ChecklistItem(
+            id: '${items.length}',
+            text: line.substring(6),
+            isChecked: false,
+            order: items.length,
+          ),
+        );
       }
     }
-
+    return items;
   }
 
   @override
@@ -1696,7 +1736,7 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final modeTabs = ['Text', 'Checklist', 'Scan'];
+    final modeTabs = ['Text', 'Checklist', 'Rich text', 'Scan'];
 
     return Scaffold(
       appBar: AppBar(
@@ -1721,6 +1761,7 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
                 setState(() {
                   _contentController.clear();
                   _scanController.clear();
+                  _richTextContent = '';
                   _checklist.clear();
                 });
                 return;
@@ -1768,7 +1809,9 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
                   ? _buildTextEditor()
                   : _modeIndex == 1
                       ? _buildChecklistEditor()
-                      : _buildScanEditor(),
+                      : _modeIndex == 2
+                          ? _buildRichTextEditor()
+                          : _buildScanEditor(),
             ),
           ),
         ],
@@ -1789,9 +1832,14 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
               tooltip: 'Checklist mode',
             ),
             IconButton(
-              onPressed: _insertImageReference,
-              icon: const Icon(Icons.image_outlined),
-              tooltip: 'Insert image reference',
+              onPressed: () => setState(() => _modeIndex = 2),
+              icon: const Icon(Icons.format_shapes_outlined),
+              tooltip: 'Rich text mode',
+            ),
+            IconButton(
+              onPressed: _scanDocument,
+              icon: const Icon(Icons.document_scanner_outlined),
+              tooltip: 'Scan document',
             ),
             IconButton(
               onPressed: _insertVoiceMemo,
@@ -1849,58 +1897,36 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
           ),
         ),
         Expanded(
-          child: _checklist.isEmpty
-              ? Center(
-                  child: Text(
-                    'No checklist items yet. Tap Add item to start.',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              : ListView.separated(
-                  itemCount: _checklist.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 2),
-                  itemBuilder: (context, index) {
-                    final item = _checklist[index];
-                    return Row(
-                      children: [
-                        Checkbox(
-                          value: item.isDone,
-                          onChanged: (value) {
-                            setState(() => item.isDone = value ?? false);
-                          },
-                        ),
-                        Expanded(
-                          child: TextFormField(
-                            initialValue: item.label,
-                            decoration: const InputDecoration(
-                              hintText: 'Checklist item',
-                              border: InputBorder.none,
-                            ),
-                            onChanged: (value) => item.label = value,
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () {
-                            setState(() => _checklist.removeAt(index));
-                          },
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () {
-              setState(() => _checklist.add(_ChecklistItem(label: '')));
+          child: ChecklistNoteEditor(
+            items: _checklist,
+            onChanged: (items) {
+              _checklist
+                ..clear()
+                ..addAll(items);
             },
-            icon: const Icon(Icons.add),
-            label: const Text('Add item'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRichTextEditor() {
+    return Column(
+      children: [
+        TextField(
+          controller: _titleController,
+          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+          decoration: const InputDecoration(
+            border: InputBorder.none,
+            hintText: 'Rich text title',
+          ),
+        ),
+        Expanded(
+          child: RichTextEditor(
+            initialContent: _richTextContent,
+            onChanged: (content) {
+              _richTextContent = content;
+            },
           ),
         ),
       ],
@@ -1914,11 +1940,15 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
         Row(
           children: [
             FilledButton.tonalIcon(
-              onPressed: _pasteScannedText,
+              onPressed: _scanDocument,
               icon: const Icon(Icons.document_scanner_outlined),
-              label: const Text('Paste OCR text'),
+              label: const Text('Scan document'),
             ),
             const SizedBox(width: 10),
+            TextButton(
+              onPressed: _pasteScannedText,
+              child: const Text('Paste text'),
+            ),
             TextButton(
               onPressed: () => _scanController.clear(),
               child: const Text('Clear'),
@@ -2059,41 +2089,6 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
     });
   }
 
-  Future<void> _insertImageReference() async {
-    final controller = TextEditingController();
-    final url = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Insert image reference'),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              hintText: 'https://example.com/image.png',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-              child: const Text('Insert'),
-            ),
-          ],
-        );
-      },
-    );
-    if (url == null || url.isEmpty) {
-      return;
-    }
-    setState(() {
-      _modeIndex = 0;
-      _contentController.text = '${_contentController.text}\n[image] $url'.trim();
-    });
-  }
-
   void _insertVoiceMemo() {
     final now = DateTime.now();
     setState(() {
@@ -2142,6 +2137,21 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
     setState(() => _scanController.text = value.trim());
   }
 
+  Future<void> _scanDocument() async {
+    final result = await Navigator.of(context).push<DocumentScanResult>(
+      MaterialPageRoute<DocumentScanResult>(
+        builder: (_) => const DocumentScannerPage(),
+      ),
+    );
+    if (result == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _modeIndex = 3;
+      _scanController.text = result.extractedText.trim();
+    });
+  }
+
   void _save() {
     final title = _titleController.text.trim();
     if (title.isEmpty) {
@@ -2149,19 +2159,32 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
     }
 
     String content;
+    NoteType noteType;
+    String contentFormat = 'plain';
+    List<ChecklistItem> checklistItems = const [];
+
     if (_modeIndex == 1) {
-      content = _checklist
-          .where((item) => item.label.trim().isNotEmpty)
-          .map((item) => item.isDone ? '- [x] ${item.label}' : '- [ ] ${item.label}')
+      noteType = NoteType.checklist;
+      checklistItems = _checklist
+          .where((item) => item.text.trim().isNotEmpty)
+          .toList(growable: false);
+      content = checklistItems
+          .map((item) => item.isChecked ? '- [x] ${item.text}' : '- [ ] ${item.text}')
           .join('\n');
     } else if (_modeIndex == 2) {
+      noteType = NoteType.richText;
+      contentFormat = 'rich';
+      content = _richTextContent.trim();
+    } else if (_modeIndex == 3) {
+      noteType = NoteType.text;
       final scanText = _scanController.text.trim();
       content = '[scan]\n$scanText';
     } else {
+      noteType = NoteType.text;
       content = _contentController.text.trim();
     }
 
-    if (_reminderAt != null) {
+    if (_reminderAt != null && noteType != NoteType.richText) {
       content = '$content\n\n[reminder] ${_reminderAt!.toIso8601String()}';
     }
 
@@ -2173,6 +2196,9 @@ class _NoteComposerPageState extends State<_NoteComposerPage> {
       _NoteDraft(
         title: title,
         content: content,
+        noteType: noteType,
+        contentFormat: contentFormat,
+        checklistItems: checklistItems,
         isPinned: _isPinned,
         tags: _tags,
         folder: _folder,
@@ -2334,7 +2360,7 @@ class _NoteOpenPageState extends State<_NoteOpenPage> {
 
   Future<void> _shareAsClipboard() async {
     await Clipboard.setData(
-      ClipboardData(text: '${widget.note.title}\n\n${widget.note.content}'),
+      ClipboardData(text: '${widget.note.title}\n\n${_notePlainText(widget.note)}'),
     );
     if (!mounted) {
       return;
@@ -2344,9 +2370,55 @@ class _NoteOpenPageState extends State<_NoteOpenPage> {
     );
   }
 
+  Widget _buildNoteBody() {
+    if (widget.note.noteType == NoteType.checklist) {
+      return Column(
+        children: [
+          Expanded(
+            child: ChecklistNoteViewer(items: _resolvedChecklistItems(widget.note)),
+          ),
+          const SizedBox(height: 8),
+          _NoteInsightsCard(note: widget.note),
+        ],
+      );
+    }
+
+    if (widget.note.noteType == NoteType.richText) {
+      return Column(
+        children: [
+          Expanded(child: RichTextViewer(content: widget.note.content)),
+          const SizedBox(height: 8),
+          _NoteInsightsCard(note: widget.note),
+        ],
+      );
+    }
+
+    final lines = _notePlainText(widget.note)
+        .split('\n')
+        .where((line) => line.trim().isNotEmpty)
+        .toList();
+
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            children: [
+              for (final line in lines)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(line),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        _NoteInsightsCard(note: widget.note),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final lines = widget.note.content.split('\n');
     final tagChips = widget.note.tags;
     return Scaffold(
       appBar: AppBar(
@@ -2430,17 +2502,7 @@ class _NoteOpenPageState extends State<_NoteOpenPage> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: ListView(
-                children: [
-                  for (final line in lines)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text(line),
-                    ),
-                  const SizedBox(height: 8),
-                  _NoteInsightsCard(note: widget.note),
-                ],
-              ),
+              child: _buildNoteBody(),
             ),
           ],
         ),
@@ -2486,6 +2548,9 @@ class _NoteDraft {
   const _NoteDraft({
     required this.title,
     required this.content,
+    required this.noteType,
+    required this.contentFormat,
+    required this.checklistItems,
     required this.isPinned,
     required this.tags,
     required this.folder,
@@ -2493,6 +2558,9 @@ class _NoteDraft {
 
   final String title;
   final String content;
+  final NoteType noteType;
+  final String contentFormat;
+  final List<ChecklistItem> checklistItems;
   final bool isPinned;
   final List<String> tags;
   final String? folder;
@@ -2523,13 +2591,6 @@ class _NoteOpenResult {
   final _NoteOpenAction action;
   final List<String>? tags;
   final String? folder;
-}
-
-class _ChecklistItem {
-  _ChecklistItem({required this.label, this.isDone = false});
-
-  String label;
-  bool isDone;
 }
 
 class _LabelLegend extends StatelessWidget {
@@ -2618,13 +2679,14 @@ class _NoteInsightsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lines = note.content.split('\n').where((line) => line.trim().isNotEmpty).toList();
-    final words = note.content
+    final plainText = _notePlainText(note);
+    final lines = plainText.split('\n').where((line) => line.trim().isNotEmpty).toList();
+    final words = plainText
         .split(RegExp(r'\s+'))
         .where((word) => word.trim().isNotEmpty)
         .length;
-    final checklistItems = lines.where((line) => line.startsWith('- [')).length;
-    final checklistDone = lines.where((line) => line.startsWith('- [x] ')).length;
+    final checklistItems = _resolvedChecklistItems(note);
+    final checklistDone = checklistItems.where((item) => item.isChecked).length;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -2641,9 +2703,10 @@ class _NoteInsightsCard extends StatelessWidget {
             style: TextStyle(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
+          Text('Type: ${_noteTypeLabel(note)}'),
           Text('Lines: ${lines.length}'),
           Text('Words: $words'),
-          Text('Checklist: $checklistDone / $checklistItems done'),
+          Text('Checklist: $checklistDone / ${checklistItems.length} done'),
           Text('Updated: ${note.updatedAt.toLocal()}'),
         ],
       ),
@@ -2912,6 +2975,7 @@ class _NormalNoteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final preview = _notePreviewText(note);
     return Container(
       decoration: BoxDecoration(
         color: accentColor,
@@ -2957,8 +3021,24 @@ class _NormalNoteCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(
+                    label: Text(_noteTypeLabel(note)),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  if (_isScanNote(note))
+                    const Chip(
+                      label: Text('Scan'),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
               Text(
-                note.content,
+                preview,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: Color(0xFF4D4A58)),
@@ -2989,6 +3069,83 @@ class _NormalNoteCard extends StatelessWidget {
     return '${delta.inDays}d ago';
   }
 }
+
+List<ChecklistItem> _resolvedChecklistItems(Note note) {
+  if (note.checklistItems.isNotEmpty) {
+    return note.checklistItems;
+  }
+
+  final items = <ChecklistItem>[];
+  for (final line in note.content.split('\n')) {
+    if (line.startsWith('- [x] ')) {
+      items.add(
+        ChecklistItem(
+          id: '${items.length}',
+          text: line.substring(6),
+          isChecked: true,
+          order: items.length,
+        ),
+      );
+    } else if (line.startsWith('- [ ] ')) {
+      items.add(
+        ChecklistItem(
+          id: '${items.length}',
+          text: line.substring(6),
+          isChecked: false,
+          order: items.length,
+        ),
+      );
+    }
+  }
+  return items;
+}
+
+String _notePlainText(Note note) {
+  if (note.noteType == NoteType.checklist) {
+    return _resolvedChecklistItems(note)
+        .map((item) => item.text)
+        .where((text) => text.trim().isNotEmpty)
+        .join('\n');
+  }
+
+  if (note.noteType == NoteType.richText) {
+    try {
+      final decoded = jsonDecode(note.content);
+      if (decoded is List) {
+        return decoded
+            .whereType<Map<String, dynamic>>()
+            .map((operation) => operation['insert'])
+            .whereType<String>()
+            .join();
+      }
+    } catch (_) {
+      return note.content;
+    }
+  }
+
+  if (_isScanNote(note)) {
+    return note.content.replaceFirst('[scan]\n', '');
+  }
+
+  return note.content;
+}
+
+String _notePreviewText(Note note) {
+  return _notePlainText(note).replaceAll('\n', ' ').trim();
+}
+
+String _noteTypeLabel(Note note) {
+  switch (note.noteType) {
+    case NoteType.text:
+      return 'Text';
+    case NoteType.checklist:
+      return 'Checklist';
+    case NoteType.richText:
+      return 'Rich text';
+  }
+}
+
+bool _isScanNote(Note note) => note.content.startsWith('[scan]\n');
 
 extension _IterableX<T> on Iterable<T> {
   T? firstWhereOrNull(bool Function(T) test) {

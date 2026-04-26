@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../core/errors/app_exceptions.dart';
 import '../core/errors/error_handler.dart';
+import '../models/checklist_item.dart';
 import '../models/note.dart';
 import '../services/notes_repository.dart';
 
@@ -66,6 +67,9 @@ class NotesController extends ChangeNotifier {
     String? noteId,
     required String title,
     required String content,
+    NoteType noteType = NoteType.text,
+    String contentFormat = 'plain',
+    List<ChecklistItem> checklistItems = const [],
   }) async {
     // Validate inputs
     ErrorHandler.validateTitleLength(title);
@@ -86,6 +90,9 @@ class NotesController extends ChangeNotifier {
             isArchived: false,
             tags: const [],
             folder: null,
+            noteType: noteType,
+            contentFormat: contentFormat,
+            checklistItems: checklistItems,
           ),
           ..._notes,
         ];
@@ -98,6 +105,9 @@ class NotesController extends ChangeNotifier {
                       title: title,
                       content: content,
                       updatedAt: now,
+                      noteType: noteType,
+                      contentFormat: contentFormat,
+                      checklistItems: checklistItems,
                     )
                   : n,
             )
@@ -168,15 +178,9 @@ class NotesController extends ChangeNotifier {
     _notes = _notes
         .map(
           (n) => n.id == noteId
-              ? Note(
-                  id: n.id,
-                  title: n.title,
-                  content: n.content,
-                  updatedAt: DateTime.now(),
-                  isPinned: n.isPinned,
-                  isArchived: n.isArchived,
-                  tags: n.tags,
+              ? n.copyWith(
                   folder: nextFolder,
+                  updatedAt: DateTime.now(),
                 )
               : n,
         )

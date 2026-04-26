@@ -129,7 +129,7 @@ flowchart LR
 - Text note
 - Checklist note
 - Image note
-- Scan note
+- Scan note (automatic OCR on Android and iOS)
 - Voice note (future)
 
 ### Organization
