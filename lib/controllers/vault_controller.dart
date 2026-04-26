@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/errors/app_exceptions.dart';
+import '../core/errors/error_handler.dart';
 import '../models/secure_note.dart';
 import '../models/vault.dart';
 import '../services/android_keystore_service.dart';
@@ -91,18 +93,25 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<Vault> createVault({required String name}) async {
+    // Validate input
+    ErrorHandler.validateVaultName(name);
+
     final vault = Vault(
       id: _uuid.v4(),
       name: name,
       isLocked: true,
     );
 
-    await _keystoreService.ensureVaultKey(_aliasForVault(vault.id));
-    _vaults = [..._vaults, vault];
-    _secureNotesByVault[vault.id] = const [];
-    await _persistVaultsEncrypted();
-    notifyListeners();
-    return vault;
+    try {
+      await _keystoreService.ensureVaultKey(_aliasForVault(vault.id));
+      _vaults = [..._vaults, vault];
+      _secureNotesByVault[vault.id] = const [];
+      await _persistVaultsEncrypted();
+      notifyListeners();
+      return vault;
+    } catch (e) {
+      throw VaultOperationError('Failed to create vault: ${e.toString()}');
+    }
   }
 
   Future<bool> unlockVault(String vaultId) async {
@@ -149,29 +158,38 @@ class VaultController extends ChangeNotifier {
     required String title,
     required String content,
   }) async {
-    final alias = _aliasForVault(vaultId);
-    final nowIso = DateTime.now().toIso8601String();
-    final payload = jsonEncode({
-      'title': title,
-      'content': content,
-      'createdAt': nowIso,
-      'updatedAt': nowIso,
-    });
-    final encryptedPayload =
-        await _keystoreService.encrypt(alias: alias, plaintext: payload);
+    // Validate inputs
+    ErrorHandler.validateTitleLength(title);
+    ErrorHandler.validateNotEmpty(content, 'Content');
 
-    final note = SecureNote(
-      id: _uuid.v4(),
-      vaultId: vaultId,
-      encryptedData: encryptedPayload,
-    );
+    try {
+      final alias = _aliasForVault(vaultId);
+      final nowIso = DateTime.now().toIso8601String();
+      final payload = jsonEncode({
+        'title': title,
+        'content': content,
+        'createdAt': nowIso,
+        'updatedAt': nowIso,
+      });
+      final encryptedPayload =
+          await _keystoreService.encrypt(alias: alias, plaintext: payload);
 
-    final existing = _secureNotesByVault[vaultId] ?? const [];
-    _secureNotesByVault[vaultId] = [note, ...existing];
-    await _repository.saveSecureNotes(vaultId, _secureNotesByVault[vaultId]!);
-    _startAutoLockTimer();
-    notifyListeners();
-    return note;
+      final note = SecureNote(
+        id: _uuid.v4(),
+        vaultId: vaultId,
+        encryptedData: encryptedPayload,
+      );
+
+      final existing = _secureNotesByVault[vaultId] ?? const [];
+      _secureNotesByVault[vaultId] = [note, ...existing];
+      await _repository.saveSecureNotes(vaultId, _secureNotesByVault[vaultId]!);
+      _startAutoLockTimer();
+      notifyListeners();
+      return note;
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw EncryptionError('Failed to save secure note: ${e.toString()}');
+    }
   }
 
   Future<void> updateSecureNote({

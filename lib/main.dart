@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'controllers/notes_controller.dart';
 import 'controllers/vault_controller.dart';
+import 'core/di/service_locator.dart';
 import 'models/note.dart';
 import 'models/secure_note.dart';
 import 'models/vault.dart';
@@ -13,8 +14,11 @@ import 'services/android_keystore_service.dart';
 import 'services/local_auth_service.dart';
 import 'services/notes_repository.dart';
 import 'services/vault_repository.dart';
+import 'ui/theme/app_theme.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await setupDependencies();
   runApp(const NoteVaultApp());
 }
 
@@ -119,29 +123,8 @@ class _NoteVaultAppState extends State<NoteVaultApp>
     return MaterialApp(
       title: 'NoteVault',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFE3B824),
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF6F6F8),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFFE8E7EC)),
-          ),
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFE3B824),
-          brightness: Brightness.dark,
-        ),
-      ),
+      theme: AppTheme.lightTheme(),
+      darkTheme: AppTheme.darkTheme(),
       themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
       home: NoteVaultShell(
         notesController: _notesController,

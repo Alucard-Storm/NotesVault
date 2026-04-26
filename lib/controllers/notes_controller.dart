@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/errors/app_exceptions.dart';
+import '../core/errors/error_handler.dart';
 import '../models/note.dart';
 import '../services/notes_repository.dart';
 
@@ -65,42 +67,50 @@ class NotesController extends ChangeNotifier {
     required String title,
     required String content,
   }) async {
-    final now = DateTime.now();
-    late final String resolvedId;
+    // Validate inputs
+    ErrorHandler.validateTitleLength(title);
 
-    if (noteId == null) {
-      resolvedId = _uuid.v4();
-      _notes = [
-        Note(
-          id: resolvedId,
-          title: title,
-          content: content,
-          updatedAt: now,
-          isPinned: false,
-          isArchived: false,
-          tags: const [],
-          folder: null,
-        ),
-        ..._notes,
-      ];
-    } else {
-      resolvedId = noteId;
-      _notes = _notes
-          .map(
-            (n) => n.id == noteId
-                ? n.copyWith(
-                    title: title,
-                    content: content,
-                    updatedAt: now,
-                  )
-                : n,
-          )
-          .toList();
+    try {
+      final now = DateTime.now();
+      late final String resolvedId;
+
+      if (noteId == null) {
+        resolvedId = _uuid.v4();
+        _notes = [
+          Note(
+            id: resolvedId,
+            title: title,
+            content: content,
+            updatedAt: now,
+            isPinned: false,
+            isArchived: false,
+            tags: const [],
+            folder: null,
+          ),
+          ..._notes,
+        ];
+      } else {
+        resolvedId = noteId;
+        _notes = _notes
+            .map(
+              (n) => n.id == noteId
+                  ? n.copyWith(
+                      title: title,
+                      content: content,
+                      updatedAt: now,
+                    )
+                  : n,
+            )
+            .toList();
+      }
+
+      await _repository.saveNotes(_notes);
+      notifyListeners();
+      return resolvedId;
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw NoteOperationError('Failed to save note: ${e.toString()}');
     }
-
-    await _repository.saveNotes(_notes);
-    notifyListeners();
-    return resolvedId;
   }
 
   Future<void> deleteNote(String noteId) async {
@@ -172,6 +182,18 @@ class NotesController extends ChangeNotifier {
         )
         .toList();
     await _repository.saveNotes(_notes);
+    notifyListeners();
+  }
+
+  /// Test helper: Add a note to internal state without persistence
+  void addNoteToInternalState(Note note) {
+    _notes = [..._notes, note];
+    notifyListeners();
+  }
+
+  /// Test helper: Clear all notes
+  void clearAllNotes() {
+    _notes = const [];
     notifyListeners();
   }
 }
