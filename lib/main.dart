@@ -14,6 +14,7 @@ import 'services/vault_repository.dart';
 import 'ui/pages/notes_page.dart';
 import 'ui/pages/search_page.dart';
 import 'ui/pages/settings_page.dart';
+import 'ui/pages/study_dashboard_page.dart';
 import 'ui/pages/vault_page.dart';
 import 'ui/theme/app_theme.dart';
 
@@ -172,6 +173,7 @@ class _NoteVaultShellState extends State<NoteVaultShell> {
         notesController: widget.notesController,
         vaultController: widget.vaultController,
       ),
+      StudyDashboardPage(controller: widget.notesController),
       VaultPage(controller: widget.vaultController),
       SettingsPage(
         controller: widget.vaultController,
@@ -190,6 +192,7 @@ class _NoteVaultShellState extends State<NoteVaultShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.sticky_note_2_outlined), label: 'Notes'),
           NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
+          NavigationDestination(icon: Icon(Icons.auto_graph_outlined), label: 'Study'),
           NavigationDestination(icon: Icon(Icons.lock_outline), label: 'Vault'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
         ],
