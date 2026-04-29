@@ -6,6 +6,8 @@ import '../../controllers/notes_controller.dart';
 import '../../controllers/vault_controller.dart';
 import '../../models/checklist_item.dart';
 import '../../models/note.dart';
+import '../../services/ai_study_service.dart';
+import '../../services/semantic_search_service.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({
@@ -22,6 +24,8 @@ class SearchPage extends StatefulWidget {
 }
 
 class _SearchPageState extends State<SearchPage> {
+  final SemanticSearchService _semanticSearch = const SemanticSearchService();
+  final AiStudyService _aiStudyService = const AiStudyService();
   final TextEditingController _queryController = TextEditingController();
   List<_SearchResult> _vaultResults = const [];
   bool _loadingVaultResults = false;
@@ -96,7 +100,13 @@ class _SearchPageState extends State<SearchPage> {
   @override
   Widget build(BuildContext context) {
     final query = _queryController.text.trim().toLowerCase();
-    final noteResults = widget.notesController.allNotes.where((note) {
+    final semanticMatches = _semanticSearch.rankNotes(
+      query: query,
+      notes: widget.notesController.allNotes,
+      plainText: _notePlainText,
+    );
+
+    final noteResults = (query.isEmpty ? widget.notesController.allNotes : semanticMatches.map((m) => m.note)).where((note) {
       final searchableContent = _notePlainText(note).toLowerCase();
       if (query.isEmpty) {
         return true;
@@ -110,6 +120,7 @@ class _SearchPageState extends State<SearchPage> {
         title: note.title,
         snippet: _notePreviewText(note),
         sourceLabel: 'Notes · $tagsLabel',
+        onGenerateStudyAid: () => _showStudyAid(context, note),
       );
     }).toList();
 
@@ -171,6 +182,7 @@ class _SearchPageState extends State<SearchPage> {
                                 maxLines: 3,
                                 overflow: TextOverflow.ellipsis,
                               ),
+                              trailing: result.onGenerateStudyAid == null ? null : IconButton(icon: const Icon(Icons.auto_awesome_outlined), onPressed: result.onGenerateStudyAid),
                             ),
                           );
                         },
@@ -180,6 +192,51 @@ class _SearchPageState extends State<SearchPage> {
       ),
     );
   }
+
+  Future<void> _showStudyAid(BuildContext context, Note note) async {
+    final summary = _aiStudyService.summarize(_notePlainText(note));
+    final questions = _aiStudyService.generateExamQuestions(_notePlainText(note));
+    final flashcards = _aiStudyService.flashcards(_notePlainText(note));
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'AI Study Assist: ${note.title}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text('Summary: $summary'),
+              const SizedBox(height: 12),
+              const Text(
+                'Exam questions',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              ...questions.map((q) => Text('• $q')),
+              const SizedBox(height: 12),
+              const Text(
+                'Flashcards',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              ...flashcards.map(
+                (f) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(f),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
 }
 
 class _SearchResult {
@@ -187,11 +244,13 @@ class _SearchResult {
     required this.title,
     required this.snippet,
     required this.sourceLabel,
+    this.onGenerateStudyAid,
   });
 
   final String title;
   final String snippet;
   final String sourceLabel;
+  final VoidCallback? onGenerateStudyAid;
 }
 
 List<ChecklistItem> _resolvedChecklistItems(Note note) {
