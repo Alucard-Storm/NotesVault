@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 /// App-wide theme constants and configuration
 class AppTheme {
   // Colors
-  static const Color seedColor = Color(0xFFE3B824);
-  static const Color lightScaffoldBackground = Color(0xFFF6F6F8);
+  static const Color seedColor = Color(0xFF7C6EF5);
+  static const Color lightScaffoldBackground = Color(0xFFF5F4FB);
   static const Color lightCardColor = Colors.white;
-  static const Color lightCardBorderColor = Color(0xFFE8E7EC);
+  static const Color lightCardBorderColor = Color(0xFFECEBF3);
 
   // Border radius
   static const double cardBorderRadius = 16.0;

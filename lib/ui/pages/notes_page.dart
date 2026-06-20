@@ -8,6 +8,15 @@ import '../../models/note.dart';
 import 'note_composer_page.dart';
 import 'note_open_page.dart';
 
+const _kAccentColors = [
+  Color(0xFFF5C252),
+  Color(0xFF9B8FEF),
+  Color(0xFF52C988),
+  Color(0xFF4A9EE5),
+  Color(0xFFE8767F),
+  Color(0xFF4CC9B0),
+];
+
 class NotesPage extends StatefulWidget {
   const NotesPage({super.key, required this.controller});
 
@@ -18,9 +27,38 @@ class NotesPage extends StatefulWidget {
 }
 
 class _NotesPageState extends State<NotesPage> {
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  String? _selectedTag;
-  String? _selectedFolder;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  String? _typeFilter;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  bool _matchesNote(Note note) {
+    if (_typeFilter != null) {
+      if (_typeFilter == 'checklist' && note.noteType != NoteType.checklist) {
+        return false;
+      }
+      if (_typeFilter == 'scan' && !_isScanNote(note)) {
+        return false;
+      }
+      if (_typeFilter == 'text' && (note.noteType != NoteType.text || _isScanNote(note))) {
+        return false;
+      }
+    }
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      if (!note.title.toLowerCase().contains(q) &&
+          !_notePlainText(note).toLowerCase().contains(q) &&
+          !note.tags.any((t) => t.toLowerCase().contains(q))) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,231 +66,197 @@ class _NotesPageState extends State<NotesPage> {
       animation: widget.controller,
       builder: (context, _) {
         if (widget.controller.isLoading) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
 
-        final allTags = widget.controller.allNotes
-            .expand((note) => note.tags)
-            .map((tag) => tag.trim())
-            .where((tag) => tag.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-        final allFolders = widget.controller.allNotes
-            .map((note) => note.folder?.trim())
-            .whereType<String>()
-            .where((folder) => folder.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-
-        final activeSource = widget.controller.activeNotes.where((note) {
-          final matchesTag = _selectedTag == null || note.tags.contains(_selectedTag);
-          final matchesFolder = _selectedFolder == null || note.folder == _selectedFolder;
-          return matchesTag && matchesFolder;
-        }).toList();
-        final archivedSource = widget.controller.archivedNotes.where((note) {
-          final matchesTag = _selectedTag == null || note.tags.contains(_selectedTag);
-          final matchesFolder = _selectedFolder == null || note.folder == _selectedFolder;
-          return matchesTag && matchesFolder;
-        }).toList();
-
+        final activeSource = widget.controller.activeNotes.where(_matchesNote).toList();
+        final archivedSource = widget.controller.archivedNotes.where(_matchesNote).toList();
         final pinned = activeSource.where((n) => n.isPinned).toList();
         final others = activeSource.where((n) => !n.isPinned).toList();
-        final notes = activeSource;
-        final archived = archivedSource;
-        final hasAnyNotes = notes.isNotEmpty || archived.isNotEmpty;
-        final filterLabel = _selectedTag != null
-            ? 'Tag: $_selectedTag'
-            : _selectedFolder != null
-                ? 'Folder: $_selectedFolder'
-                : null;
+        final hasAnyNotes = widget.controller.activeNotes.isNotEmpty ||
+            widget.controller.archivedNotes.isNotEmpty;
 
         return Scaffold(
-          key: _scaffoldKey,
-          drawer: _NotesSidebar(
-            selectedTag: _selectedTag,
-            selectedFolder: _selectedFolder,
-            allTags: allTags,
-            allFolders: allFolders,
-            onClearFilter: () {
-              setState(() {
-                _selectedTag = null;
-                _selectedFolder = null;
-              });
-              Navigator.of(context).pop();
-            },
-            onSelectTag: (tag) {
-              setState(() {
-                _selectedTag = tag;
-                _selectedFolder = null;
-              });
-              Navigator.of(context).pop();
-            },
-            onSelectFolder: (folder) {
-              setState(() {
-                _selectedFolder = folder;
-                _selectedTag = null;
-              });
-              Navigator.of(context).pop();
-            },
-          ),
           appBar: AppBar(
-            title: const Text('All Notes'),
-            leading: IconButton(
-              icon: const Icon(Icons.menu),
-              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            title: const Text(
+              'NoteVault',
+              style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: -0.5),
             ),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.search),
-                onPressed: () => _showQuickSearch(context),
-              ),
-              PopupMenuButton<_NotesListMenuAction>(
+              PopupMenuButton<_NotesMenuAction>(
                 onSelected: (value) {
-                  if (value == _NotesListMenuAction.newNote) {
-                    _openComposer(context);
-                    return;
-                  }
-                  if (value == _NotesListMenuAction.showArchivedCount) {
-                    final archivedCount = widget.controller.archivedNotes.length;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('$archivedCount archived notes in your account.'),
-                      ),
-                    );
-                    return;
-                  }
-                  if (value == _NotesListMenuAction.notesOverview) {
+                  if (value == _NotesMenuAction.overview) {
                     _showNotesOverview(context);
                     return;
                   }
-                  if (value == _NotesListMenuAction.filterByTag) {
-                    _pickFilterTag(context, allTags);
-                    return;
-                  }
-                  _pickFilterFolder(context, allFolders);
+                  final count = widget.controller.archivedNotes.length;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('$count archived notes.')),
+                  );
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(
-                    value: _NotesListMenuAction.newNote,
-                    child: Text('New note'),
-                  ),
-                  PopupMenuItem(
-                    value: _NotesListMenuAction.notesOverview,
+                    value: _NotesMenuAction.overview,
                     child: Text('Notes overview'),
                   ),
                   PopupMenuItem(
-                    value: _NotesListMenuAction.filterByTag,
-                    child: Text('Open tag filter'),
-                  ),
-                  PopupMenuItem(
-                    value: _NotesListMenuAction.filterByFolder,
-                    child: Text('Open folder filter'),
-                  ),
-                  PopupMenuItem(
-                    value: _NotesListMenuAction.showArchivedCount,
-                    child: Text('Archived notes count'),
+                    value: _NotesMenuAction.archivedCount,
+                    child: Text('Archived count'),
                   ),
                 ],
               ),
             ],
           ),
           floatingActionButton: FloatingActionButton(
-            backgroundColor: const Color(0xFFE7BD2A),
             onPressed: () => _openComposer(context),
             child: const Icon(Icons.add),
           ),
-          body: !hasAnyNotes
-              ? _EmptyState(onCreate: () => _openComposer(context))
-              : ListView(
-                  padding: const EdgeInsets.all(14),
-                  children: [
-                    if (filterLabel != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Row(
-                          children: [
-                            Chip(
-                              avatar: const Icon(Icons.filter_alt_outlined, size: 16),
-                              label: Text(filterLabel),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              onPressed: () {
-                                setState(() {
-                                  _selectedTag = null;
-                                  _selectedFolder = null;
-                                });
-                              },
-                              child: const Text('Clear'),
-                            ),
-                          ],
-                        ),
+          body: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (q) => setState(() => _searchQuery = q.trim()),
+                  decoration: InputDecoration(
+                    hintText: 'Search notes...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: Color(0xFFE0DFF3)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: Color(0xFFE0DFF3)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(
+                        color: Theme.of(context).colorScheme.primary,
                       ),
-                    if (pinned.isNotEmpty) const _SectionLabel(label: 'PINNED'),
-                    ...pinned.asMap().entries.map((entry) {
-                      final color = entry.key.isEven
-                          ? const Color(0xFFFFF1B9)
-                          : const Color(0xFFEDE5FF);
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: _NormalNoteCard(
-                          note: entry.value,
-                          accentColor: color,
-                          isPinned: true,
-                          onTap: () => _openNote(context, entry.value),
-                          onDelete: () => widget.controller.deleteNote(entry.value.id),
-                          onToggleArchived: () =>
-                              widget.controller.toggleArchived(entry.value.id),
-                        ),
-                      );
-                    }),
-                    if (others.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      const _SectionLabel(label: 'NOTES'),
-                    ],
-                    ...others.asMap().entries.map((entry) {
-                      final color = entry.key.isEven
-                          ? const Color(0xFFF9FAFB)
-                          : const Color(0xFFEAF5EC);
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: _NormalNoteCard(
-                          note: entry.value,
-                          accentColor: color,
-                          onTap: () => _openNote(context, entry.value),
-                          onDelete: () => widget.controller.deleteNote(entry.value.id),
-                          onToggleArchived: () =>
-                              widget.controller.toggleArchived(entry.value.id),
-                        ),
-                      );
-                    }),
-                    if (archived.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      const _SectionLabel(label: 'ARCHIVED'),
-                    ],
-                    ...archived.asMap().entries.map((entry) {
-                      final color = entry.key.isEven
-                          ? const Color(0xFFF0F1F5)
-                          : const Color(0xFFE6E8EF);
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: _NormalNoteCard(
-                          note: entry.value,
-                          accentColor: color,
-                          isArchived: true,
-                          onTap: () => _openNote(context, entry.value),
-                          onDelete: () => widget.controller.deleteNote(entry.value.id),
-                          onToggleArchived: () =>
-                              widget.controller.toggleArchived(entry.value.id),
-                        ),
-                      );
-                    }),
+                    ),
+                  ),
+                ),
+              ),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                child: Row(
+                  children: [
+                    _TypeFilterChip(
+                      label: 'All',
+                      icon: Icons.notes_outlined,
+                      selected: _typeFilter == null,
+                      onTap: () => setState(() => _typeFilter = null),
+                    ),
+                    const SizedBox(width: 8),
+                    _TypeFilterChip(
+                      label: 'Text',
+                      icon: Icons.text_fields_outlined,
+                      selected: _typeFilter == 'text',
+                      onTap: () => setState(() => _typeFilter = 'text'),
+                    ),
+                    const SizedBox(width: 8),
+                    _TypeFilterChip(
+                      label: 'Checklist',
+                      icon: Icons.check_box_outlined,
+                      selected: _typeFilter == 'checklist',
+                      onTap: () => setState(() => _typeFilter = 'checklist'),
+                    ),
+                    const SizedBox(width: 8),
+                    _TypeFilterChip(
+                      label: 'Scan',
+                      icon: Icons.document_scanner_outlined,
+                      selected: _typeFilter == 'scan',
+                      onTap: () => setState(() => _typeFilter = 'scan'),
+                    ),
                   ],
                 ),
+              ),
+              Expanded(
+                child: !hasAnyNotes
+                    ? _EmptyState(onCreate: () => _openComposer(context))
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 80),
+                        children: [
+                          if (pinned.isNotEmpty) ...[
+                            const _SectionLabel(label: 'PINNED'),
+                            const SizedBox(height: 8),
+                            ...pinned.asMap().entries.map(
+                                  (entry) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _NoteCard(
+                                      note: entry.value,
+                                      accentColor:
+                                          _kAccentColors[entry.key % _kAccentColors.length],
+                                      isPinned: true,
+                                      onTap: () => _openNote(context, entry.value),
+                                      onDelete: () =>
+                                          widget.controller.deleteNote(entry.value.id),
+                                      onToggleArchived: () =>
+                                          widget.controller.toggleArchived(entry.value.id),
+                                    ),
+                                  ),
+                                ),
+                          ],
+                          if (others.isNotEmpty) ...[
+                            if (pinned.isNotEmpty) const SizedBox(height: 4),
+                            const _SectionLabel(label: 'NOTES'),
+                            const SizedBox(height: 8),
+                            ...others.asMap().entries.map(
+                                  (entry) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _NoteCard(
+                                      note: entry.value,
+                                      accentColor:
+                                          _kAccentColors[entry.key % _kAccentColors.length],
+                                      onTap: () => _openNote(context, entry.value),
+                                      onDelete: () =>
+                                          widget.controller.deleteNote(entry.value.id),
+                                      onToggleArchived: () =>
+                                          widget.controller.toggleArchived(entry.value.id),
+                                    ),
+                                  ),
+                                ),
+                          ],
+                          if (archivedSource.isNotEmpty) ...[
+                            if (pinned.isNotEmpty || others.isNotEmpty)
+                              const SizedBox(height: 4),
+                            const _SectionLabel(label: 'ARCHIVED'),
+                            const SizedBox(height: 8),
+                            ...archivedSource.asMap().entries.map(
+                                  (entry) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _NoteCard(
+                                      note: entry.value,
+                                      accentColor: const Color(0xFFCCCAD5),
+                                      isArchived: true,
+                                      onTap: () => _openNote(context, entry.value),
+                                      onDelete: () =>
+                                          widget.controller.deleteNote(entry.value.id),
+                                      onToggleArchived: () =>
+                                          widget.controller.toggleArchived(entry.value.id),
+                                    ),
+                                  ),
+                                ),
+                          ],
+                        ],
+                      ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -264,9 +268,7 @@ class _NotesPageState extends State<NotesPage> {
         builder: (_) => NoteComposerPage(note: note),
       ),
     );
-    if (draft == null) {
-      return;
-    }
+    if (draft == null) return;
 
     final savedId = await widget.controller.upsertNote(
       noteId: note?.id,
@@ -277,9 +279,7 @@ class _NotesPageState extends State<NotesPage> {
       checklistItems: draft.checklistItems,
     );
 
-    if (!context.mounted) {
-      return;
-    }
+    if (!context.mounted) return;
 
     final latest = widget.controller.findById(savedId);
     final shouldPin = draft.isPinned;
@@ -329,80 +329,6 @@ class _NotesPageState extends State<NotesPage> {
     );
   }
 
-  Future<void> _showQuickSearch(BuildContext rootContext) async {
-    final queryController = TextEditingController();
-    await showDialog<void>(
-      context: rootContext,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            final q = queryController.text.trim().toLowerCase();
-            final results = widget.controller.allNotes.where((note) {
-              final searchableContent = _notePlainText(note).toLowerCase();
-              if (q.isEmpty) {
-                return true;
-              }
-              return note.title.toLowerCase().contains(q) ||
-                  searchableContent.contains(q) ||
-                  note.tags.any((tag) => tag.toLowerCase().contains(q));
-            }).toList();
-            return AlertDialog(
-              title: const Text('Quick Search'),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: queryController,
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(
-                        hintText: 'Type title, content, or tag',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 260,
-                      child: results.isEmpty
-                          ? const Center(child: Text('No matching notes'))
-                          : ListView.separated(
-                              itemCount: results.length,
-                              separatorBuilder: (_, _) => const Divider(height: 1),
-                              itemBuilder: (context, index) {
-                                final note = results[index];
-                                return ListTile(
-                                  title: Text(note.title),
-                                  subtitle: Text(
-                                    _notePreviewText(note),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  onTap: () {
-                                    Navigator.of(context).pop();
-                                    _openNote(rootContext, note);
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    queryController.dispose();
-  }
-
   Future<void> _openNote(BuildContext context, Note note) async {
     final current = widget.controller.findById(note.id) ?? note;
     final result = await Navigator.of(context).push<NoteOpenResult>(
@@ -411,13 +337,8 @@ class _NotesPageState extends State<NotesPage> {
       ),
     );
 
-    if (!context.mounted) {
-      return;
-    }
-
-    if (result == null) {
-      return;
-    }
+    if (!context.mounted) return;
+    if (result == null) return;
 
     switch (result.action) {
       case NoteOpenAction.edit:
@@ -441,81 +362,11 @@ class _NotesPageState extends State<NotesPage> {
         return;
     }
   }
-
-  Future<void> _pickFilterTag(BuildContext context, List<String> tags) async {
-    if (tags.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No tags available yet.')),
-      );
-      return;
-    }
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('Filter by tag')),
-            for (final tag in tags)
-              ListTile(
-                title: Text(tag),
-                onTap: () => Navigator.of(context).pop(tag),
-              ),
-          ],
-        );
-      },
-    );
-    if (selected == null) {
-      return;
-    }
-    setState(() {
-      _selectedTag = selected;
-      _selectedFolder = null;
-    });
-  }
-
-  Future<void> _pickFilterFolder(BuildContext context, List<String> folders) async {
-    if (folders.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No folders available yet.')),
-      );
-      return;
-    }
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('Filter by folder')),
-            for (final folder in folders)
-              ListTile(
-                title: Text(folder),
-                onTap: () => Navigator.of(context).pop(folder),
-              ),
-          ],
-        );
-      },
-    );
-    if (selected == null) {
-      return;
-    }
-    setState(() {
-      _selectedFolder = selected;
-      _selectedTag = null;
-    });
-  }
 }
 
-enum _NotesListMenuAction {
-  newNote,
-  notesOverview,
-  filterByTag,
-  filterByFolder,
-  showArchivedCount,
-}
+enum _NotesMenuAction { overview, archivedCount }
+
+// ── Stateless widgets ────────────────────────────────────────────────────────
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.onCreate});
@@ -526,119 +377,32 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.note_add_outlined, size: 48, color: Color(0xFF8F8AA2)),
-            const SizedBox(height: 12),
+            Icon(
+              Icons.note_add_outlined,
+              size: 56,
+              color: Theme.of(context).colorScheme.primary.withValues(alpha:0.35),
+            ),
+            const SizedBox(height: 14),
             const Text(
               'No notes yet',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             const Text(
-              'Create text notes, checklist notes, and scan notes.',
+              'Capture thoughts, checklists, and scanned documents.',
               textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF7A778A)),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: onCreate,
               icon: const Icon(Icons.add),
               label: const Text('Create Note'),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NotesSidebar extends StatelessWidget {
-  const _NotesSidebar({
-    required this.selectedTag,
-    required this.selectedFolder,
-    required this.allTags,
-    required this.allFolders,
-    required this.onClearFilter,
-    required this.onSelectTag,
-    required this.onSelectFolder,
-  });
-
-  final String? selectedTag;
-  final String? selectedFolder;
-  final List<String> allTags;
-  final List<String> allFolders;
-  final VoidCallback onClearFilter;
-  final ValueChanged<String> onSelectTag;
-  final ValueChanged<String> onSelectFolder;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasFilter = selectedTag != null || selectedFolder != null;
-
-    return Drawer(
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
-          children: [
-            const ListTile(
-              leading: Icon(Icons.sticky_note_2_outlined),
-              title: Text('Notes Library'),
-              subtitle: Text('Tags + folders'),
-            ),
-            if (hasFilter)
-              ListTile(
-                leading: const Icon(Icons.filter_alt_off_outlined),
-                title: const Text('Clear active filter'),
-                onTap: onClearFilter,
-              ),
-            const Divider(),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Text('Folders', style: TextStyle(fontWeight: FontWeight.w700)),
-            ),
-            if (allFolders.isEmpty)
-              const ListTile(
-                dense: true,
-                title: Text('No folders yet'),
-              )
-            else
-              for (final folder in allFolders)
-                ListTile(
-                  leading: const Icon(Icons.folder_outlined),
-                  title: Text(folder),
-                  trailing: selectedFolder == folder
-                      ? Icon(
-                          Icons.check,
-                          color: Theme.of(context).colorScheme.primary,
-                        )
-                      : null,
-                  onTap: () => onSelectFolder(folder),
-                ),
-            const Divider(),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Text('Tags', style: TextStyle(fontWeight: FontWeight.w700)),
-            ),
-            if (allTags.isEmpty)
-              const ListTile(
-                dense: true,
-                title: Text('No tags yet'),
-              )
-            else
-              for (final tag in allTags)
-                ListTile(
-                  leading: const Icon(Icons.sell_outlined),
-                  title: Text(tag),
-                  trailing: selectedTag == tag
-                      ? Icon(
-                          Icons.check,
-                          color: Theme.of(context).colorScheme.primary,
-                        )
-                      : null,
-                  onTap: () => onSelectTag(tag),
-                ),
           ],
         ),
       ),
@@ -655,107 +419,189 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       label,
-      style: const TextStyle(
-        fontSize: 12,
-        letterSpacing: 1,
+      style: TextStyle(
+        fontSize: 11,
+        letterSpacing: 1.2,
         fontWeight: FontWeight.w700,
-        color: Color(0xFF7A748A),
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha:0.38),
       ),
     );
   }
 }
 
-class _NormalNoteCard extends StatelessWidget {
-  const _NormalNoteCard({
+class _TypeFilterChip extends StatelessWidget {
+  const _TypeFilterChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? primary.withValues(alpha:0.1) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? primary : const Color(0xFFDDDCEA)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: selected ? primary : const Color(0xFF7A778A)),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: selected ? primary : const Color(0xFF7A778A),
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NoteCard extends StatelessWidget {
+  const _NoteCard({
     required this.note,
+    required this.accentColor,
     required this.onTap,
     required this.onDelete,
-    required this.accentColor,
     required this.onToggleArchived,
     this.isPinned = false,
     this.isArchived = false,
   });
 
   final Note note;
+  final Color accentColor;
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final VoidCallback onToggleArchived;
-  final Color accentColor;
   final bool isPinned;
   final bool isArchived;
+
+  String _relativeTime(DateTime value) {
+    final delta = DateTime.now().difference(value);
+    if (delta.inMinutes < 1) return 'just now';
+    if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
+    if (delta.inHours < 24) return '${delta.inHours}h ago';
+    return '${delta.inDays}d ago';
+  }
 
   @override
   Widget build(BuildContext context) {
     final preview = _notePreviewText(note);
     return Container(
       decoration: BoxDecoration(
-        color: accentColor,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE7E7EA)),
+        border: Border.all(color: const Color(0xFFECEBF3)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x0A000000), blurRadius: 6, offset: Offset(0, 2)),
+        ],
       ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 6, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(13),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      note.title,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+              Container(width: 5, color: accentColor),
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: onTap,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 4, 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  note.title,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700, fontSize: 15),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (isPinned)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 2),
+                                  child: Icon(Icons.push_pin,
+                                      size: 13, color: Color(0xFFE3A517)),
+                                ),
+                              SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: IconButton(
+                                  tooltip: isArchived ? 'Restore' : 'Archive',
+                                  icon: Icon(
+                                    isArchived
+                                        ? Icons.unarchive_outlined
+                                        : Icons.archive_outlined,
+                                    size: 16,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: onToggleArchived,
+                                ),
+                              ),
+                              SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: IconButton(
+                                  tooltip: 'Delete',
+                                  icon: const Icon(Icons.delete_outline, size: 16),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: onDelete,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (preview.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              preview,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Color(0xFF6D6A79), fontSize: 13, height: 1.4),
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              _NoteBadge(note: note),
+                              const Spacer(),
+                              Text(
+                                _relativeTime(note.updatedAt),
+                                style: const TextStyle(
+                                    fontSize: 11, color: Color(0xFF9B97A8)),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  if (isPinned)
-                    const Icon(
-                      Icons.push_pin,
-                      size: 14,
-                      color: Color(0xFFE3A517),
-                    ),
-                  IconButton(
-                    tooltip: isArchived ? 'Restore note' : 'Archive note',
-                    icon: Icon(
-                      isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
-                    ),
-                    onPressed: onToggleArchived,
-                  ),
-                  IconButton(
-                    tooltip: 'Delete note',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: onDelete,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  Chip(
-                    label: Text(_noteTypeLabel(note)),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  if (_isScanNote(note))
-                    const Chip(
-                      label: Text('Scan'),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                preview,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFF4D4A58)),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _relativeTime(note.updatedAt),
-                style: const TextStyle(fontSize: 12, color: Color(0xFF7D778D)),
+                ),
               ),
             ],
           ),
@@ -763,47 +609,59 @@ class _NormalNoteCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  String _relativeTime(DateTime value) {
-    final delta = DateTime.now().difference(value);
-    if (delta.inMinutes < 1) {
-      return 'just now';
+class _NoteBadge extends StatelessWidget {
+  const _NoteBadge({required this.note});
+
+  final Note note;
+
+  @override
+  Widget build(BuildContext context) {
+    final IconData icon;
+    final String label;
+    if (note.noteType == NoteType.checklist) {
+      icon = Icons.check_box_outlined;
+      label = 'Checklist';
+    } else if (_isScanNote(note)) {
+      icon = Icons.document_scanner_outlined;
+      label = 'Scan';
+    } else if (note.noteType == NoteType.richText) {
+      icon = Icons.format_shapes_outlined;
+      label = 'Rich';
+    } else {
+      icon = Icons.text_fields_outlined;
+      label = 'Text';
     }
-    if (delta.inMinutes < 60) {
-      return '${delta.inMinutes}m ago';
-    }
-    if (delta.inHours < 24) {
-      return '${delta.inHours}h ago';
-    }
-    return '${delta.inDays}d ago';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: const Color(0xFF9B97A8)),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF9B97A8))),
+      ],
+    );
   }
 }
 
-List<ChecklistItem> _resolvedChecklistItems(Note note) {
-  if (note.checklistItems.isNotEmpty) {
-    return note.checklistItems;
-  }
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
+List<ChecklistItem> _resolvedChecklistItems(Note note) {
+  if (note.checklistItems.isNotEmpty) return note.checklistItems;
   final items = <ChecklistItem>[];
   for (final line in note.content.split('\n')) {
     if (line.startsWith('- [x] ')) {
-      items.add(
-        ChecklistItem(
+      items.add(ChecklistItem(
           id: '${items.length}',
           text: line.substring(6),
           isChecked: true,
-          order: items.length,
-        ),
-      );
+          order: items.length));
     } else if (line.startsWith('- [ ] ')) {
-      items.add(
-        ChecklistItem(
+      items.add(ChecklistItem(
           id: '${items.length}',
           text: line.substring(6),
           isChecked: false,
-          order: items.length,
-        ),
-      );
+          order: items.length));
     }
   }
   return items;
@@ -816,14 +674,13 @@ String _notePlainText(Note note) {
         .where((text) => text.trim().isNotEmpty)
         .join('\n');
   }
-
   if (note.noteType == NoteType.richText) {
     try {
       final decoded = jsonDecode(note.content);
       if (decoded is List) {
         return decoded
             .whereType<Map<String, dynamic>>()
-            .map((operation) => operation['insert'])
+            .map((op) => op['insert'])
             .whereType<String>()
             .join();
       }
@@ -831,27 +688,10 @@ String _notePlainText(Note note) {
       return note.content;
     }
   }
-
-  if (_isScanNote(note)) {
-    return note.content.replaceFirst('[scan]\n', '');
-  }
-
+  if (_isScanNote(note)) return note.content.replaceFirst('[scan]\n', '');
   return note.content;
 }
 
-String _notePreviewText(Note note) {
-  return _notePlainText(note).replaceAll('\n', ' ').trim();
-}
-
-String _noteTypeLabel(Note note) {
-  switch (note.noteType) {
-    case NoteType.text:
-      return 'Text';
-    case NoteType.checklist:
-      return 'Checklist';
-    case NoteType.richText:
-      return 'Rich text';
-  }
-}
+String _notePreviewText(Note note) => _notePlainText(note).replaceAll('\n', ' ').trim();
 
 bool _isScanNote(Note note) => note.content.startsWith('[scan]\n');
